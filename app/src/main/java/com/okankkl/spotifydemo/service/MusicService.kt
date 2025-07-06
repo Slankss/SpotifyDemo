@@ -11,7 +11,6 @@ import android.os.Binder
 import android.os.IBinder
 import android.support.v4.media.session.MediaControllerCompat
 import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import com.okankkl.spotifydemo.MainActivity
 import com.okankkl.spotifydemo.R
@@ -59,21 +58,6 @@ class MusicService: Service() {
     lateinit var playPauseAction: NotificationCompat.Action
     lateinit var prevAction: NotificationCompat.Action
     lateinit var nextAction: NotificationCompat.Action
-
-    private val playbackState = PlaybackStateCompat.Builder()
-        .setState(
-            if (::mediaPlayer.isInitialized && mediaPlayer.isPlaying) PlaybackStateCompat.STATE_PLAYING
-            else PlaybackStateCompat.STATE_PAUSED,
-            0,
-            1.0f
-        )
-        .setActions(
-            PlaybackStateCompat.ACTION_PLAY or
-            PlaybackStateCompat.ACTION_PAUSE or
-            PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-            PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-        )
-        .build()
 
     inner class MusicBinder: Binder(){
         fun getService(): MusicService = this@MusicService
@@ -143,7 +127,6 @@ class MusicService: Service() {
                     }
                 }
             })
-            setPlaybackState(playbackState)
             isActive = true
         }
         mediaController = MediaControllerCompat(this, mediaSession.sessionToken)
@@ -181,7 +164,6 @@ class MusicService: Service() {
                         false
                     }
                     if (playing) {
-                        updatePlaybackState(PlaybackStateCompat.ACTION_PLAY.toInt())
                         progressChannel.send(progress())
                     }
                     try {
@@ -228,7 +210,6 @@ class MusicService: Service() {
         if ( (::mediaPlayer.isInitialized) && !mediaPlayer.isPlaying) {
             startProgressUpdates()
             mediaPlayer.start()
-            updatePlaybackState(PlaybackStateCompat.STATE_PLAYING)
             showNotification()
         }
     }
@@ -237,17 +218,17 @@ class MusicService: Service() {
         if ( (::mediaPlayer.isInitialized) && mediaPlayer.isPlaying) {
             stopProgress()
             mediaPlayer.pause()
-            updatePlaybackState(PlaybackStateCompat.STATE_PAUSED)
             showNotification()
         }
     }
 
     fun restart(){
         if (::mediaPlayer.isInitialized){
+            CoroutineScope(Dispatchers.Default).launch {
+                progressChannel.send(0f)
+            }
             mediaPlayer.seekTo(0)
-            mediaPlayer.start()
-            updatePlaybackState(PlaybackStateCompat.STATE_PLAYING)
-            showNotification()
+            if (mediaPlayer.isPlaying) mediaPlayer.start()
         }
     }
 
@@ -263,6 +244,10 @@ class MusicService: Service() {
     }
 
     fun skip(prev: Boolean = false, isPlaying: Boolean? = null) {
+        if ( repeat || (prev && progress() >= 10) ) {
+            restart()
+            return
+        }
         val musicList = (shuffledMusicList ?: musicList)
         musicList?.let { musicList ->
             val currentIndex = musicList.indexOf(currentMusic)
@@ -273,8 +258,7 @@ class MusicService: Service() {
             }
             currentMusic = musicList[newIndex]
 
-            if (prev && progress() >= 10) restart()
-            else playNewMusic(isPlaying = isPlaying)
+            if (mediaPlayer.isPlaying) playNewMusic(isPlaying = isPlaying)
         }
     }
 
@@ -296,10 +280,8 @@ class MusicService: Service() {
             .addAction(prevAction)
             .addAction(playPauseAction)
             .addAction(nextAction)
-            .setProgress(duration(), progress().toInt(), false)
             .setBadgeIconType(NotificationCompat.BADGE_ICON_LARGE)
             .setFullScreenIntent(getFullScreenIntent(), true) // Priority Level
-            .setProgress(duration(), progress().toInt(), true)
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
                     .setMediaSession(mediaSession.sessionToken)
@@ -328,21 +310,6 @@ class MusicService: Service() {
         }
 
         notificationManager.createNotificationChannel(channel)
-    }
-
-    private fun updatePlaybackState(state: Int) {
-        val playbackState = PlaybackStateCompat.Builder()
-            .setActions(
-                PlaybackStateCompat.ACTION_PLAY or
-                PlaybackStateCompat.ACTION_PAUSE or
-                PlaybackStateCompat.ACTION_SEEK_TO or
-                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-            )
-            .setState(state, mediaPlayer.currentPosition.toLong(), 1f)
-            .build()
-
-        mediaSession.setPlaybackState(playbackState)
     }
 
     private fun getPendingIntent(action: String): PendingIntent {
