@@ -11,7 +11,6 @@ val Background = Color(0xFF121212)
 val Surface = Color(0xFF181818)
 val PrimaryText = Color(0xFFFFFFFF)
 val SecondaryText = Color(0xFFB3B3B3)
-val Disabled = Color(0xFF535353)
 
 val BackgroundBrush = Brush.verticalGradient(
     colors = listOf(

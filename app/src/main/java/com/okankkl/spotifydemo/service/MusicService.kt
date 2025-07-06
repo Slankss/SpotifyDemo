@@ -11,7 +11,6 @@ import android.os.Binder
 import android.os.IBinder
 import android.support.v4.media.session.MediaControllerCompat
 import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import com.okankkl.spotifydemo.MainActivity
 import com.okankkl.spotifydemo.R
@@ -55,26 +54,6 @@ class MusicService: Service() {
     private val progressChannel = Channel<Float>(Channel.CONFLATED)
     // Conflated takes only last value
 
-    // Actions
-    lateinit var playPauseAction: NotificationCompat.Action
-    lateinit var prevAction: NotificationCompat.Action
-    lateinit var nextAction: NotificationCompat.Action
-
-    private val playbackState = PlaybackStateCompat.Builder()
-        .setState(
-            if (::mediaPlayer.isInitialized && mediaPlayer.isPlaying) PlaybackStateCompat.STATE_PLAYING
-            else PlaybackStateCompat.STATE_PAUSED,
-            0,
-            1.0f
-        )
-        .setActions(
-            PlaybackStateCompat.ACTION_PLAY or
-            PlaybackStateCompat.ACTION_PAUSE or
-            PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-            PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-        )
-        .build()
-
     inner class MusicBinder: Binder(){
         fun getService(): MusicService = this@MusicService
     }
@@ -87,75 +66,64 @@ class MusicService: Service() {
 
         musicList = MusicData.musicData
         currentMusic = musicList?.first()
-        currentMusic?.let {
-            mediaPlayer = MediaPlayer.create(this, it.musicPath)
-        }
-
-        // Create actions
-        playPauseAction = if (mediaPlayer.isPlaying) {
-            NotificationCompat.Action(
-                R.drawable.ic_pause,
-                "Pause",
-                getPendingIntent(ACTION_PAUSE)
-            )
-        } else {
-            NotificationCompat.Action(
-                R.drawable.ic_play, "Play",
-                getPendingIntent(ACTION_PLAY)
-            )
-        }
-
-        prevAction = NotificationCompat.Action(
-            R.drawable.ic_skip_prev,
-            "Previous",
-            getPendingIntent(ACTION_PREV)
-        )
-
-        nextAction = NotificationCompat.Action(
-            R.drawable.ic_skip_next,
-            "Next",
-            getPendingIntent(ACTION_NEXT)
-        )
 
         mediaSession = MediaSessionCompat(this, "MusicService").apply {
-            setCallback( object: MediaSessionCompat.Callback() {
-                override fun onPlay() {
-                    play()
-                    sendBroadcast(Intent(ACTION_PLAY))
-                }
-
-                override fun onPause() {
-                    pause()
-                    sendBroadcast(Intent(ACTION_PAUSE))
-                }
-
-                override fun onSkipToNext() {
-                    skip()
-                }
-
-                override fun onSkipToPrevious() {
-                    skip(true)
-                }
-
-                override fun onSeekTo(pos: Long) {
-                    if (::mediaPlayer.isInitialized) {
-                        mediaPlayer.seekTo(pos.toInt())
-                    }
-                }
-            })
-            setPlaybackState(playbackState)
+//            setCallback( object: MediaSessionCompat.Callback() {
+//                override fun onPlay() {
+//                    Log.d("ICARDI","PLAY")
+//                    play()
+//                    sendBroadcast(Intent(ACTION_PLAY))
+//                }
+//
+//                override fun onPause() {
+//                    Log.d("ICARDI","PLAY")
+//                    pause()
+//                    sendBroadcast(Intent(ACTION_PAUSE))
+//                }
+//
+//                override fun onSkipToNext() {
+//                    skip()
+//                }
+//
+//                override fun onSkipToPrevious() {
+//                    skip(true)
+//                }
+//
+//                override fun onSeekTo(pos: Long) {
+//                    if (::mediaPlayer.isInitialized) {
+//                        mediaPlayer.seekTo(pos.toInt())
+//                    }
+//                }
+//            })
             isActive = true
         }
         mediaController = MediaControllerCompat(this, mediaSession.sessionToken)
+        currentMusic?.let {
+            mediaPlayer = MediaPlayer.create(this, it.musicPath)
+            startForeground(NOTIFICATION_ID, buildNotification(it))
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+
+        when (intent?.action) {
+            ACTION_PLAY -> {
+                play()
+                sendBroadcast(Intent(ACTION_PLAY))
+            }
+            ACTION_PAUSE -> {
+                pause()
+                sendBroadcast(Intent(ACTION_PLAY))
+            }
+            ACTION_NEXT -> skip()
+            ACTION_PREV -> skip(true)
+        }
+
+        return START_STICKY
     }
 
     override fun onBind(p0: Intent?): IBinder {
         return binder
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        playNewMusic()
-        return START_STICKY
     }
 
     fun setMusicList(musicList: List<Music>){
@@ -181,7 +149,6 @@ class MusicService: Service() {
                         false
                     }
                     if (playing) {
-                        updatePlaybackState(PlaybackStateCompat.ACTION_PLAY.toInt())
                         progressChannel.send(progress())
                     }
                     try {
@@ -214,8 +181,9 @@ class MusicService: Service() {
 
             if (isPlaying) {
                 play()
-                showNotification()
             }
+
+            showNotification()
 
             val intent = Intent(ACTION_CURRENT_MUSIC).apply {
                 putExtra(DATA_MUSIC,music)
@@ -228,7 +196,6 @@ class MusicService: Service() {
         if ( (::mediaPlayer.isInitialized) && !mediaPlayer.isPlaying) {
             startProgressUpdates()
             mediaPlayer.start()
-            updatePlaybackState(PlaybackStateCompat.STATE_PLAYING)
             showNotification()
         }
     }
@@ -237,16 +204,17 @@ class MusicService: Service() {
         if ( (::mediaPlayer.isInitialized) && mediaPlayer.isPlaying) {
             stopProgress()
             mediaPlayer.pause()
-            updatePlaybackState(PlaybackStateCompat.STATE_PAUSED)
             showNotification()
         }
     }
 
     fun restart(){
         if (::mediaPlayer.isInitialized){
+            CoroutineScope(Dispatchers.Default).launch {
+                progressChannel.send(0f)
+            }
             mediaPlayer.seekTo(0)
-            mediaPlayer.start()
-            updatePlaybackState(PlaybackStateCompat.STATE_PLAYING)
+            if (mediaPlayer.isPlaying) mediaPlayer.start()
             showNotification()
         }
     }
@@ -263,6 +231,10 @@ class MusicService: Service() {
     }
 
     fun skip(prev: Boolean = false, isPlaying: Boolean? = null) {
+        if ( repeat || (prev && progress() >= 10) ) {
+            restart()
+            return
+        }
         val musicList = (shuffledMusicList ?: musicList)
         musicList?.let { musicList ->
             val currentIndex = musicList.indexOf(currentMusic)
@@ -273,8 +245,7 @@ class MusicService: Service() {
             }
             currentMusic = musicList[newIndex]
 
-            if (prev && progress() >= 10) restart()
-            else playNewMusic(isPlaying = isPlaying)
+            playNewMusic(isPlaying = isPlaying)
         }
     }
 
@@ -289,6 +260,32 @@ class MusicService: Service() {
     fun isPlaying(): Boolean = mediaPlayer.isPlaying
 
     fun buildNotification(music: Music): Notification {
+        // Create actions
+        val playPauseAction = if (mediaPlayer.isPlaying) {
+            NotificationCompat.Action(
+                R.drawable.ic_pause,
+                "Pause",
+                getPendingIntent(ACTION_PAUSE)
+            )
+        } else {
+            NotificationCompat.Action(
+                R.drawable.ic_play, "Play",
+                getPendingIntent(ACTION_PLAY)
+            )
+        }
+
+        val prevAction = NotificationCompat.Action(
+            R.drawable.ic_skip_prev,
+            "Previous",
+            getPendingIntent(ACTION_PREV)
+        )
+
+        val nextAction = NotificationCompat.Action(
+            R.drawable.ic_skip_next,
+            "Next",
+            getPendingIntent(ACTION_NEXT)
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(music.title)
             .setContentText(music.artist)
@@ -296,10 +293,8 @@ class MusicService: Service() {
             .addAction(prevAction)
             .addAction(playPauseAction)
             .addAction(nextAction)
-            .setProgress(duration(), progress().toInt(), false)
             .setBadgeIconType(NotificationCompat.BADGE_ICON_LARGE)
             .setFullScreenIntent(getFullScreenIntent(), true) // Priority Level
-            .setProgress(duration(), progress().toInt(), true)
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
                     .setMediaSession(mediaSession.sessionToken)
@@ -328,21 +323,6 @@ class MusicService: Service() {
         }
 
         notificationManager.createNotificationChannel(channel)
-    }
-
-    private fun updatePlaybackState(state: Int) {
-        val playbackState = PlaybackStateCompat.Builder()
-            .setActions(
-                PlaybackStateCompat.ACTION_PLAY or
-                PlaybackStateCompat.ACTION_PAUSE or
-                PlaybackStateCompat.ACTION_SEEK_TO or
-                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-            )
-            .setState(state, mediaPlayer.currentPosition.toLong(), 1f)
-            .build()
-
-        mediaSession.setPlaybackState(playbackState)
     }
 
     private fun getPendingIntent(action: String): PendingIntent {
